@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Comparateur de Plans — Eiffage</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" integrity="sha512-DTOQO9RWCH3ppGqcWaEA1BIZOC6xxalwEsw9c2QQeAIftl+Vegovlnee1c9QX4TctnWMn13TZye+giMm8e2LwA==" crossorigin="anonymous" referrerpolicy="no-referrer">
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="header-left">
+            <div class="logo">
+                <i class="fas fa-layer-group"></i>
+                <span>Comparateur de Plans</span>
+            </div>
+        </div>
+        <div class="header-right">
+            <button id="helpBtn" class="btn btn-ghost" title="Aide">
+                <i class="fas fa-question-circle"></i>
+                <span class="btn-label">Aide</span>
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="main">
+        <!-- Step 1: Upload -->
+        <section id="uploadSection" class="section upload-section">
+            <h2 class="section-title">
+                <span class="step-number">1</span>
+                Déposez vos deux plans à comparer
+            </h2>
+            <p class="section-subtitle">Formats acceptés : PDF, PNG, JPG, JPEG, BMP, TIFF</p>
+
+            <div class="upload-container">
+                <!-- Old Plan -->
+                <div class="upload-zone" id="dropZoneOld" data-target="old">
+                    <div class="upload-icon">
+                        <i class="fas fa-file-pdf"></i>
+                    </div>
+                    <div class="upload-text">
+                        <p class="upload-main">Ancien plan</p>
+                        <p class="upload-sub">Glissez-déposez ou cliquez pour parcourir</p>
+                    </div>
+                    <div class="upload-status" id="statusOld"></div>
+                    <input type="file" id="fileOld" accept=".pdf,.png,.jpg,.jpeg,.bmp,.tiff,.tif" hidden>
+                </div>
+
+                <div class="upload-arrow">
+                    <i class="fas fa-arrow-right"></i>
+                    <span>vs</span>
+                </div>
+
+                <!-- New Plan -->
+                <div class="upload-zone" id="dropZoneNew" data-target="new">
+                    <div class="upload-icon">
+                        <i class="fas fa-file-pdf"></i>
+                    </div>
+                    <div class="upload-text">
+                        <p class="upload-main">Nouveau plan</p>
+                        <p class="upload-sub">Glissez-déposez ou cliquez pour parcourir</p>
+                    </div>
+                    <div class="upload-status" id="statusNew"></div>
+                    <input type="file" id="fileNew" accept=".pdf,.png,.jpg,.jpeg,.bmp,.tiff,.tif" hidden>
+                </div>
+            </div>
+
+            <!-- PDF Page Selector (appears for multi-page PDFs) -->
+            <div id="pageSelector" class="page-selector hidden">
+                <div class="page-select-group" id="pageSelectorOld">
+                    <label>Page de l'ancien plan :</label>
+                    <select id="pageOld"></select>
+                    <span id="pageCountOld"></span>
+                </div>
+                <div class="page-select-group" id="pageSelectorNew">
+                    <label>Page du nouveau plan :</label>
+                    <select id="pageNew"></select>
+                    <span id="pageCountNew"></span>
+                </div>
+            </div>
+
+            <!-- Compare Button -->
+            <div class="compare-action">
+                <button id="compareBtn" class="btn btn-primary btn-large" disabled>
+                    <i class="fas fa-search-plus"></i>
+                    Comparer les plans
+                </button>
+            </div>
+        </section>
+
+        <!-- Step 2: Results -->
+        <section id="resultSection" class="section result-section hidden">
+            <div class="result-header">
+                <h2 class="section-title">
+                    <span class="step-number">2</span>
+                    Résultat de la comparaison
+                </h2>
+                <div class="result-actions">
+                    <button id="newCompareBtn" class="btn btn-secondary">
+                        <i class="fas fa-redo"></i>
+                        Nouvelle comparaison
+                    </button>
+                    <button id="exportBtn" class="btn btn-primary">
+                        <i class="fas fa-download"></i>
+                        Exporter le résultat
+                    </button>
+                </div>
+            </div>
+
+            <!-- View Mode Tabs -->
+            <div class="view-tabs">
+                <button class="tab active" data-mode="overlay">
+                    <i class="fas fa-clone"></i>
+                    Superposition
+                </button>
+                <button class="tab" data-mode="slider">
+                    <i class="fas fa-arrows-alt-h"></i>
+                    Curseur avant/après
+                </button>
+                <button class="tab" data-mode="sidebyside">
+                    <i class="fas fa-columns"></i>
+                    Côte à côte
+                </button>
+                <button class="tab" data-mode="diff">
+                    <i class="fas fa-exchange-alt"></i>
+                    Différences seules
+                </button>
+            </div>
+
+            <!-- Controls -->
+            <div class="controls">
+                <!-- Alignment controls -->
+                <div class="control-group" id="alignmentControls">
+                    <label class="control-label">
+                        <i class="fas fa-crosshairs"></i> Recalage
+                    </label>
+                    <button id="autoAlignBtn" class="btn btn-sm btn-secondary" title="Aligner automatiquement les plans">
+                        <i class="fas fa-magic"></i> Auto-alignement
+                    </button>
+                    <button id="manualAlignBtn" class="btn btn-sm btn-ghost" title="Placer manuellement des points de correspondance">
+                        <i class="fas fa-map-pin"></i> Manuel
+                    </button>
+                    <button id="resetAlignBtn" class="btn btn-sm btn-ghost" title="Réinitialiser l'alignement">
+                        <i class="fas fa-undo"></i> Reset
+                    </button>
+                </div>
+
+                <!-- Opacity slider for overlay mode -->
+                <div class="control-group" id="opacityControl">
+                    <label class="control-label" for="opacitySlider">
+                        <i class="fas fa-adjust"></i> Opacité nouveau plan
+                    </label>
+                    <input type="range" id="opacitySlider" min="0" max="100" value="50" class="slider">
+                    <span id="opacityValue" class="slider-value">50%</span>
+                </div>
+
+                <!-- Sensitivity for diff mode -->
+                <div class="control-group hidden" id="sensitivityControl">
+                    <label class="control-label" for="sensitivitySlider">
+                        <i class="fas fa-sliders-h"></i> Sensibilité
+                    </label>
+                    <input type="range" id="sensitivitySlider" min="0" max="100" value="30" class="slider">
+                    <span id="sensitivityValue" class="slider-value">30</span>
+                </div>
+
+                <!-- Zoom -->
+                <div class="control-group">
+                    <label class="control-label">
+                        <i class="fas fa-search"></i> Zoom
+                    </label>
+                    <button id="zoomOutBtn" class="btn btn-sm btn-ghost"><i class="fas fa-minus"></i></button>
+                    <span id="zoomValue" class="slider-value">100%</span>
+                    <button id="zoomInBtn" class="btn btn-sm btn-ghost"><i class="fas fa-plus"></i></button>
+                    <button id="zoomFitBtn" class="btn btn-sm btn-ghost"><i class="fas fa-expand"></i> Ajuster</button>
+                </div>
+            </div>
+
+            <!-- Legend -->
+            <div class="legend" id="legend">
+                <div class="legend-item">
+                    <span class="legend-color" style="background: #000;"></span>
+                    <span>Identique</span>
+                </div>
+                <div class="legend-item">
+                    <span class="legend-color" style="background: #e74c3c;"></span>
+                    <span>Supprimé (ancien)</span>
+                </div>
+                <div class="legend-item">
+                    <span class="legend-color" style="background: #2980b9;"></span>
+                    <span>Ajouté (nouveau)</span>
+                </div>
+            </div>
+
+            <!-- Canvas Area -->
+            <div class="canvas-container" id="canvasContainer">
+                <!-- Overlay Mode -->
+                <div class="canvas-view" id="overlayView">
+                    <canvas id="canvasOverlay"></canvas>
+                </div>
+
+                <!-- Slider Mode -->
+                <div class="canvas-view hidden" id="sliderView">
+                    <div class="slider-container" id="sliderContainer">
+                        <canvas id="canvasSliderOld"></canvas>
+                        <div class="slider-clip" id="sliderClip">
+                            <canvas id="canvasSliderNew"></canvas>
+                        </div>
+                        <div class="slider-handle" id="sliderHandle">
+                            <div class="slider-handle-line"></div>
+                            <div class="slider-handle-grip">
+                                <i class="fas fa-grip-lines-vertical"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Side by Side Mode -->
+                <div class="canvas-view hidden" id="sideBySideView">
+                    <div class="side-panel">
+                        <h3>Ancien plan</h3>
+                        <div class="side-canvas-wrap" id="sideOldWrap">
+                            <canvas id="canvasSideOld"></canvas>
+                        </div>
+                    </div>
+                    <div class="side-divider"></div>
+                    <div class="side-panel">
+                        <h3>Nouveau plan</h3>
+                        <div class="side-canvas-wrap" id="sideNewWrap">
+                            <canvas id="canvasSideNew"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Diff Only Mode -->
+                <div class="canvas-view hidden" id="diffView">
+                    <canvas id="canvasDiff"></canvas>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Help Modal -->
+    <div id="helpModal" class="modal hidden">
+        <div class="modal-backdrop"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2><i class="fas fa-question-circle"></i> Comment utiliser le comparateur ?</h2>
+                <button class="modal-close" id="closeHelp"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="modal-body">
+                <div class="help-step">
+                    <div class="help-step-number">1</div>
+                    <div>
+                        <h3>Déposez vos plans</h3>
+                        <p>Glissez-déposez ou cliquez pour charger l'<strong>ancien plan</strong> (à gauche) et le <strong>nouveau plan</strong> (à droite). Les formats PDF, PNG, JPG, BMP et TIFF sont acceptés.</p>
+                    </div>
+                </div>
+                <div class="help-step">
+                    <div class="help-step-number">2</div>
+                    <div>
+                        <h3>Comparez</h3>
+                        <p>Cliquez sur <strong>"Comparer les plans"</strong>. L'outil superpose les deux plans et colore les différences.</p>
+                    </div>
+                </div>
+                <div class="help-step">
+                    <div class="help-step-number">3</div>
+                    <div>
+                        <h3>Explorez les différences</h3>
+                        <p>Utilisez les 4 modes de vue :</p>
+                        <ul>
+                            <li><strong>Superposition</strong> : ancien en rouge, nouveau en bleu, identique en noir</li>
+                            <li><strong>Curseur</strong> : glissez pour révéler ancien/nouveau</li>
+                            <li><strong>Côte à côte</strong> : zoom synchronisé sur les deux plans</li>
+                            <li><strong>Différences seules</strong> : n'affiche que ce qui a changé</li>
+                        </ul>
+                    </div>
+                </div>
+                <div class="help-step">
+                    <div class="help-step-number">4</div>
+                    <div>
+                        <h3>Alignez si nécessaire</h3>
+                        <p>Si les plans ont des formats différents, utilisez l'<strong>auto-alignement</strong> ou placez manuellement des points de correspondance pour recaler les plans l'un sur l'autre.</p>
+                    </div>
+                </div>
+                <div class="help-step">
+                    <div class="help-step-number">5</div>
+                    <div>
+                        <h3>Exportez</h3>
+                        <p>Téléchargez le résultat en image PNG pour le partager ou l'archiver.</p>
+                    </div>
+                </div>
+                <div class="help-note">
+                    <i class="fas fa-shield-alt"></i>
+                    <p><strong>Sécurité :</strong> Vos plans ne quittent jamais votre appareil. Tout le traitement est effectué localement dans votre navigateur.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div id="loadingOverlay" class="loading-overlay hidden">
+        <div class="loading-spinner">
+            <div class="spinner"></div>
+            <p id="loadingText">Analyse des plans en cours...</p>
+        </div>
+    </div>
+
+    <!-- Manual Alignment Modal -->
+    <div id="alignModal" class="modal hidden">
+        <div class="modal-backdrop"></div>
+        <div class="modal-content modal-large">
+            <div class="modal-header">
+                <h2><i class="fas fa-map-pin"></i> Alignement manuel</h2>
+                <button class="modal-close" id="closeAlign"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="modal-body">
+                <p class="align-instructions">Cliquez sur <strong>3 points identiques</strong> dans chaque plan pour les aligner. Par exemple : un coin de bâtiment, une intersection de murs, un angle de pièce.</p>
+                <div class="align-panels">
+                    <div class="align-panel">
+                        <h3>Ancien plan <span id="alignPointsOld" class="badge">0/3</span></h3>
+                        <div class="align-canvas-wrap">
+                            <canvas id="canvasAlignOld"></canvas>
+                        </div>
+                    </div>
+                    <div class="align-panel">
+                        <h3>Nouveau plan <span id="alignPointsNew" class="badge">0/3</span></h3>
+                        <div class="align-canvas-wrap">
+                            <canvas id="canvasAlignNew"></canvas>
+                        </div>
+                    </div>
+                </div>
+                <div class="align-actions">
+                    <button id="alignResetBtn" class="btn btn-secondary">
+                        <i class="fas fa-undo"></i> Recommencer
+                    </button>
+                    <button id="alignApplyBtn" class="btn btn-primary" disabled>
+                        <i class="fas fa-check"></i> Appliquer l'alignement
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js" integrity="sha512-q+4liFwdPC+bNPOBEO1lBB3ij/LGMbILcaVGWFfpgSiDGnBG0vFSjlLmDpiLOr2t8uf/GrKYGf6sBxNxhyoA==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script>
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    </script>
+    <script src="js/utils.js"></script>
+    <script src="js/pdf-renderer.js"></script>
+    <script src="js/alignment.js"></script>
+    <script src="js/comparator.js"></script>
+    <script src="js/ui.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>
