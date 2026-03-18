@@ -10,12 +10,17 @@
     const state = {
         fileOld: null,
         fileNew: null,
-        canvasOld: null,    // Canvas rendu brut de l'ancien plan
-        canvasNew: null,    // Canvas rendu brut du nouveau plan
-        normOld: null,      // Canvas normalisé (même taille)
-        normNew: null,      // Canvas normalisé
+        canvasOld: null,        // Canvas rendu brut
+        canvasNew: null,
+        binOld: null,           // Canvas binaire pré-traité
+        binNew: null,
+        normOld: null,          // Canvas raw aligné (slider/côte à côte)
+        normNew: null,
+        alignedBinOld: null,    // Canvas binaire aligné (comparaison)
+        alignedBinNew: null,
         overlayCanvas: null,
         diffCanvas: null,
+        comparisonStats: null,
         pageOld: 1,
         pageNew: 1,
         pageCountOld: 1,
@@ -24,13 +29,17 @@
         zoom: 1,
         minZoom: 0.1,
         maxZoom: 5,
-        sensitivity: 30,
-        opacity: 0.5,
-        alignTransform: null,
+        tolerance: 5,
+        minComponentSize: 50,
+        alignment: null,
         isPanning: false,
         panStart: { x: 0, y: 0 },
         scrollStart: { x: 0, y: 0 }
     };
+
+    function sleep(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
 
     // ── Initialisation ──
     function init() {
@@ -150,48 +159,80 @@
             state.canvasOld = resultOld.canvas;
             state.canvasNew = resultNew.canvas;
 
-            UI.showLoading('Alignement et comparaison...');
+            // 2. Pré-traitement : binarisation adaptative
+            UI.showLoading('Binarisation des plans...');
+            await sleep(20);
+            state.binOld = ImageProcessing.preprocess(state.canvasOld);
+            state.binNew = ImageProcessing.preprocess(state.canvasNew);
 
-            // 2. Normaliser (même taille), avec transformation si définie
-            const norm = PdfRenderer.normalizeCanvases(
-                state.canvasOld,
-                state.canvasNew,
-                state.alignTransform
-            );
-            state.normOld = norm.canvasA;
-            state.normNew = norm.canvasB;
+            // 3. Alignement automatique par corrélation croisée
+            UI.showLoading('Alignement automatique...');
+            await sleep(20);
+            state.alignment = Alignment.autoAlign(state.binOld, state.binNew);
 
-            // 3. Générer la comparaison
+            // 4. Appliquer l'alignement
+            UI.showLoading('Application de l\'alignement...');
+            await sleep(20);
+            if (state.alignment) {
+                const ab = Alignment.applyAutoAlignment(state.binOld, state.binNew, state.alignment);
+                state.alignedBinOld = ab.canvasA;
+                state.alignedBinNew = ab.canvasB;
+                const ar = Alignment.applyAutoAlignment(state.canvasOld, state.canvasNew, state.alignment);
+                state.normOld = ar.canvasA;
+                state.normNew = ar.canvasB;
+            } else {
+                // Pas d'alignement trouvé — normaliser les tailles
+                const normBin = PdfRenderer.normalizeCanvases(state.binOld, state.binNew);
+                state.alignedBinOld = normBin.canvasA;
+                state.alignedBinNew = normBin.canvasB;
+                const normRaw = PdfRenderer.normalizeCanvases(state.canvasOld, state.canvasNew);
+                state.normOld = normRaw.canvasA;
+                state.normNew = normRaw.canvasB;
+            }
+
+            // 5. Comparaison tolérante
+            UI.showLoading('Comparaison tolérante...');
+            await sleep(20);
             generateComparisons();
 
-            // 4. Afficher la section résultat
+            // 6. Afficher
             document.getElementById('uploadSection').classList.add('hidden');
             document.getElementById('resultSection').classList.remove('hidden');
 
-            // 5. Dessiner le mode actif
             state.currentMode = 'overlay';
             UI.switchViewMode('overlay');
             renderCurrentMode();
-
-            // 6. Ajuster le zoom
             fitZoom();
 
             UI.hideLoading();
-            UI.showToast('Comparaison terminée !', 'success');
+
+            if (state.comparisonStats) {
+                const s = state.comparisonStats;
+                const total = s.same + s.removed + s.added;
+                const pctSame = total > 0 ? Math.round(s.same / total * 100) : 0;
+                UI.showToast(`Comparaison terminée — ${pctSame}% identique`, 'success');
+            } else {
+                UI.showToast('Comparaison terminée !', 'success');
+            }
         } catch (err) {
             UI.hideLoading();
             console.error(err);
-            UI.showToast('Erreur lors de la comparaison : ' + err.message, 'error');
+            UI.showToast('Erreur : ' + err.message, 'error');
         }
     }
 
     function generateComparisons() {
-        state.overlayCanvas = Comparator.createOverlay(
-            state.normOld, state.normNew, state.sensitivity
+        const result = Comparator.compare(
+            state.alignedBinOld,
+            state.alignedBinNew,
+            state.normOld,
+            state.normNew,
+            state.tolerance,
+            state.minComponentSize
         );
-        state.diffCanvas = Comparator.createDiffOnly(
-            state.normOld, state.normNew, state.sensitivity
-        );
+        state.overlayCanvas = result.overlay;
+        state.diffCanvas = result.diffOnly;
+        state.comparisonStats = result.stats;
     }
 
     function renderCurrentMode() {
@@ -199,17 +240,12 @@
 
         switch (state.currentMode) {
             case 'overlay':
-                // Superposition colorée avec opacité
-                const blended = Comparator.createOverlay(
-                    state.normOld, state.normNew, state.sensitivity
-                );
-                UI.drawToCanvas('canvasOverlay', blended, z);
+                UI.drawToCanvas('canvasOverlay', state.overlayCanvas, z);
                 break;
 
             case 'slider':
                 UI.drawToCanvas('canvasSliderOld', state.normOld, z);
                 UI.drawToCanvas('canvasSliderNew', state.normNew, z);
-                // Ajuster la taille du conteneur slider
                 const sliderContainer = document.getElementById('sliderContainer');
                 sliderContainer.style.width = Math.round(state.normOld.width * z) + 'px';
                 sliderContainer.style.height = Math.round(state.normOld.height * z) + 'px';
@@ -222,10 +258,7 @@
                 break;
 
             case 'diff':
-                const diff = Comparator.createDiffOnly(
-                    state.normOld, state.normNew, state.sensitivity
-                );
-                UI.drawToCanvas('canvasDiff', diff, z);
+                UI.drawToCanvas('canvasDiff', state.diffCanvas, z);
                 break;
         }
     }
@@ -243,43 +276,48 @@
 
     // ── Controls ──
     function bindControls() {
-        // Opacité
-        const opacitySlider = document.getElementById('opacitySlider');
-        opacitySlider.addEventListener('input', (e) => {
-            state.opacity = parseInt(e.target.value) / 100;
-            document.getElementById('opacityValue').textContent = e.target.value + '%';
-            renderCurrentMode();
-        });
+        // Tolérance
+        const toleranceSlider = document.getElementById('toleranceSlider');
+        toleranceSlider.addEventListener('input', Utils.debounce((e) => {
+            state.tolerance = parseInt(e.target.value);
+            document.getElementById('toleranceValue').textContent = e.target.value + ' px';
+            if (state.alignedBinOld) {
+                generateComparisons();
+                renderCurrentMode();
+            }
+        }, 300));
 
-        // Sensibilité
-        const sensitivitySlider = document.getElementById('sensitivitySlider');
-        sensitivitySlider.addEventListener('input', Utils.debounce((e) => {
-            state.sensitivity = parseInt(e.target.value);
-            document.getElementById('sensitivityValue').textContent = e.target.value;
-            generateComparisons();
-            renderCurrentMode();
-        }, 200));
+        // Taille min composant
+        const minSizeSlider = document.getElementById('minSizeSlider');
+        minSizeSlider.addEventListener('input', Utils.debounce((e) => {
+            state.minComponentSize = parseInt(e.target.value);
+            document.getElementById('minSizeValue').textContent = e.target.value + ' px';
+            if (state.alignedBinOld) {
+                generateComparisons();
+                renderCurrentMode();
+            }
+        }, 300));
 
         // Alignement
         document.getElementById('autoAlignBtn').addEventListener('click', () => {
-            if (!state.canvasOld || !state.canvasNew) return;
+            if (!state.binOld || !state.binNew) return;
             UI.showLoading('Auto-alignement en cours...');
             setTimeout(() => {
-                state.alignTransform = Alignment.autoAlign(state.canvasOld, state.canvasNew);
-                if (state.alignTransform) {
-                    // Refaire la normalisation avec le transform
-                    const norm = PdfRenderer.normalizeCanvases(
-                        state.canvasOld, state.canvasNew, state.alignTransform
-                    );
-                    state.normOld = norm.canvasA;
-                    state.normNew = norm.canvasB;
+                state.alignment = Alignment.autoAlign(state.binOld, state.binNew);
+                if (state.alignment) {
+                    const ab = Alignment.applyAutoAlignment(state.binOld, state.binNew, state.alignment);
+                    state.alignedBinOld = ab.canvasA;
+                    state.alignedBinNew = ab.canvasB;
+                    const ar = Alignment.applyAutoAlignment(state.canvasOld, state.canvasNew, state.alignment);
+                    state.normOld = ar.canvasA;
+                    state.normNew = ar.canvasB;
                     generateComparisons();
                     renderCurrentMode();
                     UI.hideLoading();
                     UI.showToast('Plans alignés automatiquement', 'success');
                 } else {
                     UI.hideLoading();
-                    UI.showToast('Impossible d\'aligner automatiquement. Essayez l\'alignement manuel.', 'error');
+                    UI.showToast('Impossible d\'aligner. Essayez l\'alignement manuel.', 'error');
                 }
             }, 50);
         });
@@ -290,12 +328,15 @@
         });
 
         document.getElementById('resetAlignBtn').addEventListener('click', () => {
-            state.alignTransform = null;
+            state.alignment = null;
             Alignment.resetPoints();
-            if (state.canvasOld && state.canvasNew) {
-                const norm = PdfRenderer.normalizeCanvases(state.canvasOld, state.canvasNew);
-                state.normOld = norm.canvasA;
-                state.normNew = norm.canvasB;
+            if (state.binOld && state.binNew) {
+                const normBin = PdfRenderer.normalizeCanvases(state.binOld, state.binNew);
+                state.alignedBinOld = normBin.canvasA;
+                state.alignedBinNew = normBin.canvasB;
+                const normRaw = PdfRenderer.normalizeCanvases(state.canvasOld, state.canvasNew);
+                state.normOld = normRaw.canvasA;
+                state.normNew = normRaw.canvasB;
                 generateComparisons();
                 renderCurrentMode();
                 UI.showToast('Alignement réinitialisé', 'info');
@@ -516,26 +557,35 @@
 
         document.getElementById('alignApplyBtn').addEventListener('click', () => {
             const affine = Alignment.computeTransformFromPoints(
-                Alignment.pointsNew,  // source = nouveau
-                Alignment.pointsOld   // destination = ancien
+                Alignment.pointsNew,
+                Alignment.pointsOld
             );
             if (!affine) {
                 UI.showToast('Impossible de calculer l\'alignement', 'error');
                 return;
             }
 
-            // Appliquer la transformation
-            const alignedNew = Alignment.applyAffineTransform(
+            // Appliquer aux binaires
+            const alignedBinNew = Alignment.applyAffineTransform(
+                state.binNew,
+                state.binOld.width,
+                state.binOld.height,
+                affine
+            );
+            const normBin = PdfRenderer.normalizeCanvases(state.binOld, alignedBinNew);
+            state.alignedBinOld = normBin.canvasA;
+            state.alignedBinNew = normBin.canvasB;
+
+            // Appliquer aux raw
+            const alignedRawNew = Alignment.applyAffineTransform(
                 state.canvasNew,
                 state.canvasOld.width,
                 state.canvasOld.height,
                 affine
             );
-
-            // Renormaliser
-            const norm = PdfRenderer.normalizeCanvases(state.canvasOld, alignedNew);
-            state.normOld = norm.canvasA;
-            state.normNew = norm.canvasB;
+            const normRaw = PdfRenderer.normalizeCanvases(state.canvasOld, alignedRawNew);
+            state.normOld = normRaw.canvasA;
+            state.normNew = normRaw.canvasB;
 
             generateComparisons();
             renderCurrentMode();
@@ -641,16 +691,21 @@
         state.fileNew = null;
         state.canvasOld = null;
         state.canvasNew = null;
+        state.binOld = null;
+        state.binNew = null;
         state.normOld = null;
         state.normNew = null;
+        state.alignedBinOld = null;
+        state.alignedBinNew = null;
         state.overlayCanvas = null;
         state.diffCanvas = null;
+        state.comparisonStats = null;
         state.pageOld = 1;
         state.pageNew = 1;
         state.pageCountOld = 1;
         state.pageCountNew = 1;
         state.zoom = 1;
-        state.alignTransform = null;
+        state.alignment = null;
         Alignment.resetPoints();
 
         UI.resetUploadStatus('old');

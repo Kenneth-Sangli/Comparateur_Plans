@@ -113,12 +113,13 @@ const UI = {
         });
 
         // Afficher/cacher les contrôles selon le mode
-        const opacityCtrl = document.getElementById('opacityControl');
-        const sensitivityCtrl = document.getElementById('sensitivityControl');
+        const toleranceCtrl = document.getElementById('toleranceControl');
+        const minSizeCtrl = document.getElementById('minSizeControl');
         const legend = document.getElementById('legend');
 
-        opacityCtrl.classList.toggle('hidden', mode !== 'overlay');
-        sensitivityCtrl.classList.toggle('hidden', mode !== 'diff' && mode !== 'overlay');
+        const showComparisonControls = mode === 'overlay' || mode === 'diff';
+        toleranceCtrl.classList.toggle('hidden', !showComparisonControls);
+        minSizeCtrl.classList.toggle('hidden', !showComparisonControls);
 
         if (mode === 'slider' || mode === 'sidebyside') {
             legend.classList.add('hidden');

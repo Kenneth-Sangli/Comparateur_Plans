@@ -147,22 +147,22 @@
                     </button>
                 </div>
 
-                <!-- Opacity slider for overlay mode -->
-                <div class="control-group" id="opacityControl">
-                    <label class="control-label" for="opacitySlider">
-                        <i class="fas fa-adjust"></i> Opacité nouveau plan
+                <!-- Tolérance spatiale -->
+                <div class="control-group" id="toleranceControl">
+                    <label class="control-label" for="toleranceSlider">
+                        <i class="fas fa-bullseye"></i> Tolérance
                     </label>
-                    <input type="range" id="opacitySlider" min="0" max="100" value="50" class="slider">
-                    <span id="opacityValue" class="slider-value">50%</span>
+                    <input type="range" id="toleranceSlider" min="1" max="10" value="5" class="slider">
+                    <span id="toleranceValue" class="slider-value">5 px</span>
                 </div>
 
-                <!-- Sensitivity for diff mode -->
-                <div class="control-group hidden" id="sensitivityControl">
-                    <label class="control-label" for="sensitivitySlider">
-                        <i class="fas fa-sliders-h"></i> Sensibilité
+                <!-- Taille min des différences -->
+                <div class="control-group" id="minSizeControl">
+                    <label class="control-label" for="minSizeSlider">
+                        <i class="fas fa-compress-arrows-alt"></i> Taille min. différence
                     </label>
-                    <input type="range" id="sensitivitySlider" min="0" max="100" value="30" class="slider">
-                    <span id="sensitivityValue" class="slider-value">30</span>
+                    <input type="range" id="minSizeSlider" min="0" max="200" value="50" class="slider">
+                    <span id="minSizeValue" class="slider-value">50 px</span>
                 </div>
 
                 <!-- Zoom -->
@@ -350,6 +350,7 @@
     </script>
     <script src="js/utils.js"></script>
     <script src="js/pdf-renderer.js"></script>
+    <script src="js/image-processing.js"></script>
     <script src="js/alignment.js"></script>
     <script src="js/comparator.js"></script>
     <script src="js/ui.js"></script>

@@ -1,201 +1,203 @@
 /* ============================================
-   COMPARATOR — Moteur de comparaison visuelle
+   COMPARATOR — Moteur de comparaison tolérante
+   Élimine les faux positifs par tolérance spatiale
+   + post-traitement anti-bruit
+   Rendu basé sur les plans ORIGINAUX (haute qualité)
    ============================================ */
 
 const Comparator = {
+
     /**
-     * Crée la superposition colorée :
-     * - Identique → Noir
-     * - Ancien uniquement (supprimé) → Rouge
-     * - Nouveau uniquement (ajouté) → Bleu
+     * Comparaison tolérante avec rendu haute qualité.
+     * Utilise les binaires pour la LOGIQUE, les originaux pour le RENDU.
      *
-     * @param {HTMLCanvasElement} canvasOld - Ancien plan (normalisé)
-     * @param {HTMLCanvasElement} canvasNew - Nouveau plan (normalisé)
-     * @param {number} sensitivity - Seuil de sensibilité (0-100)
-     * @returns {HTMLCanvasElement} Canvas du résultat
+     * @param {HTMLCanvasElement} binOld - Ancien plan binarisé (aligné)
+     * @param {HTMLCanvasElement} binNew - Nouveau plan binarisé (aligné)
+     * @param {HTMLCanvasElement} rawOld - Ancien plan original (aligné, haute qualité)
+     * @param {HTMLCanvasElement} rawNew - Nouveau plan original (aligné, haute qualité)
+     * @param {number} tolerance - Rayon de tolérance en pixels (1-10)
+     * @param {number} minComponentSize - Taille min d'une différence
+     * @returns {{overlay: HTMLCanvasElement, diffOnly: HTMLCanvasElement, stats: Object}}
      */
-    createOverlay(canvasOld, canvasNew, sensitivity = 30) {
-        const w = canvasOld.width;
-        const h = canvasOld.height;
-        const dataOld = Utils.getImageData(canvasOld);
-        const dataNew = Utils.getImageData(canvasNew);
+    compare(binOld, binNew, rawOld, rawNew, tolerance = 4, minComponentSize = 30) {
+        const w = binOld.width;
+        const h = binOld.height;
 
-        const result = document.createElement('canvas');
-        result.width = w;
-        result.height = h;
-        const ctx = result.getContext('2d');
-        const output = ctx.createImageData(w, h);
+        // 1. Extraire les binaires (0 = trait, 255 = fond)
+        const bOld = ImageProcessing.canvasToBinary(binOld);
+        const bNew = ImageProcessing.canvasToBinary(binNew);
 
-        const pixOld = dataOld.data;
-        const pixNew = dataNew.data;
-        const pixOut = output.data;
+        // 2. Dilater chaque plan → zones de tolérance
+        const dilatedOld = ImageProcessing.dilate(bOld, w, h, tolerance);
+        const dilatedNew = ImageProcessing.dilate(bNew, w, h, tolerance);
 
-        // Seuil pour considérer un pixel comme "tracé" (non blanc)
-        const contentThreshold = 255 - Math.round(sensitivity * 2.5);
-        // Seuil de différence de couleur
-        const diffThreshold = Math.round(sensitivity * 0.8);
+        // 3. Classification pixel par pixel
+        const rawRemoved = new Uint8Array(w * h);
+        const rawAdded = new Uint8Array(w * h);
+        const same = new Uint8Array(w * h);
 
-        for (let i = 0; i < pixOld.length; i += 4) {
-            const grayOld = Utils.toGrayscale(pixOld[i], pixOld[i + 1], pixOld[i + 2]);
-            const grayNew = Utils.toGrayscale(pixNew[i], pixNew[i + 1], pixNew[i + 2]);
+        let countSame = 0, countRemoved = 0, countAdded = 0;
 
-            const isContentOld = grayOld < contentThreshold;
-            const isContentNew = grayNew < contentThreshold;
+        for (let i = 0; i < w * h; i++) {
+            const isOld = bOld[i] === 0;
+            const isNew = bNew[i] === 0;
+            const inDilatedOld = dilatedOld[i] === 0;
+            const inDilatedNew = dilatedNew[i] === 0;
 
-            const diff = Math.abs(grayOld - grayNew);
+            if (isOld && inDilatedNew) {
+                same[i] = 1;
+                countSame++;
+            } else if (isOld && !inDilatedNew) {
+                rawRemoved[i] = 1;
+                countRemoved++;
+            }
 
-            if (isContentOld && isContentNew && diff <= diffThreshold) {
-                // Identique → Noir
-                pixOut[i] = 0;
-                pixOut[i + 1] = 0;
-                pixOut[i + 2] = 0;
-                pixOut[i + 3] = 255;
-            } else if (isContentOld && (!isContentNew || diff > diffThreshold)) {
-                // Supprimé (ancien) → Rouge
-                pixOut[i] = 231;     // #e74c3c
-                pixOut[i + 1] = 76;
-                pixOut[i + 2] = 60;
-                pixOut[i + 3] = 255;
-            } else if (isContentNew && (!isContentOld || diff > diffThreshold)) {
-                // Ajouté (nouveau) → Bleu
-                pixOut[i] = 41;      // #2980b9
-                pixOut[i + 1] = 128;
-                pixOut[i + 2] = 185;
-                pixOut[i + 3] = 255;
-            } else {
-                // Fond blanc
-                pixOut[i] = 255;
-                pixOut[i + 1] = 255;
-                pixOut[i + 2] = 255;
-                pixOut[i + 3] = 255;
+            if (isNew && inDilatedOld) {
+                if (!same[i]) { same[i] = 1; }
+            } else if (isNew && !inDilatedOld) {
+                rawAdded[i] = 1;
+                countAdded++;
             }
         }
 
-        ctx.putImageData(output, 0, 0);
+        // 4. Post-traitement : supprimer les petits composants (bruit)
+        const cleanedRemoved = minComponentSize > 0
+            ? ImageProcessing.removeSmallComponents(this._maskToBinary(rawRemoved, w * h), w, h, minComponentSize)
+            : this._maskToBinary(rawRemoved, w * h);
+
+        const cleanedAdded = minComponentSize > 0
+            ? ImageProcessing.removeSmallComponents(this._maskToBinary(rawAdded, w * h), w, h, minComponentSize)
+            : this._maskToBinary(rawAdded, w * h);
+
+        // 5. Extraire les pixels originaux pour le rendu haute qualité
+        const rawOldData = rawOld.getContext('2d').getImageData(0, 0, w, h).data;
+        const rawNewData = rawNew.getContext('2d').getImageData(0, 0, w, h).data;
+
+        // 6. Générer les résultats visuels
+        const overlay = this._createOverlayCanvas(same, cleanedRemoved, cleanedAdded, rawOldData, rawNewData, w, h);
+        const diffOnly = this._createDiffOnlyCanvas(same, cleanedRemoved, cleanedAdded, rawOldData, rawNewData, w, h);
+
+        // Statistiques
+        let finalRemoved = 0, finalAdded = 0;
+        for (let i = 0; i < w * h; i++) {
+            if (cleanedRemoved[i] === 0) finalRemoved++;
+            if (cleanedAdded[i] === 0) finalAdded++;
+        }
+
+        return {
+            overlay,
+            diffOnly,
+            stats: {
+                same: countSame,
+                removed: finalRemoved,
+                added: finalAdded,
+                total: countSame + finalRemoved + finalAdded
+            }
+        };
+    },
+
+    _maskToBinary(mask, length) {
+        const result = new Uint8Array(length);
+        result.fill(255);
+        for (let i = 0; i < length; i++) {
+            if (mask[i] === 1) result[i] = 0;
+        }
         return result;
     },
 
     /**
-     * Crée un canvas ne montrant que les différences
-     * (zones supprimées en rouge, ajoutées en bleu, le reste transparent/blanc)
+     * Overlay : plan original en fond + différences colorées par-dessus
+     * - Zones identiques → plan original désaturé (gris)
+     * - Supprimé → rouge vif sur le tracé original
+     * - Ajouté → bleu vif sur le tracé original
+     * - Fond (ni ancien ni nouveau) → blanc
      */
-    createDiffOnly(canvasOld, canvasNew, sensitivity = 30) {
-        const w = canvasOld.width;
-        const h = canvasOld.height;
-        const dataOld = Utils.getImageData(canvasOld);
-        const dataNew = Utils.getImageData(canvasNew);
+    _createOverlayCanvas(same, removed, added, rawOldPx, rawNewPx, w, h) {
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        const imgData = ctx.createImageData(w, h);
+        const out = imgData.data;
 
-        const result = document.createElement('canvas');
-        result.width = w;
-        result.height = h;
-        const ctx = result.getContext('2d');
-        const output = ctx.createImageData(w, h);
-
-        const pixOld = dataOld.data;
-        const pixNew = dataNew.data;
-        const pixOut = output.data;
-
-        const contentThreshold = 255 - Math.round(sensitivity * 2.5);
-        const diffThreshold = Math.round(sensitivity * 0.8);
-
-        for (let i = 0; i < pixOld.length; i += 4) {
-            const grayOld = Utils.toGrayscale(pixOld[i], pixOld[i + 1], pixOld[i + 2]);
-            const grayNew = Utils.toGrayscale(pixNew[i], pixNew[i + 1], pixNew[i + 2]);
-
-            const isContentOld = grayOld < contentThreshold;
-            const isContentNew = grayNew < contentThreshold;
-            const diff = Math.abs(grayOld - grayNew);
-
-            if (isContentOld && isContentNew && diff <= diffThreshold) {
-                // Identique → gris très léger (contexte)
-                pixOut[i] = 230;
-                pixOut[i + 1] = 230;
-                pixOut[i + 2] = 230;
-                pixOut[i + 3] = 255;
-            } else if (isContentOld && (!isContentNew || diff > diffThreshold)) {
-                // Supprimé → Rouge
-                pixOut[i] = 231;
-                pixOut[i + 1] = 76;
-                pixOut[i + 2] = 60;
-                pixOut[i + 3] = 255;
-            } else if (isContentNew && (!isContentOld || diff > diffThreshold)) {
-                // Ajouté → Bleu
-                pixOut[i] = 41;
-                pixOut[i + 1] = 128;
-                pixOut[i + 2] = 185;
-                pixOut[i + 3] = 255;
+        for (let i = 0, j = 0; i < w * h; i++, j += 4) {
+            if (removed[i] === 0) {
+                // Supprimé → teinter le pixel original ancien en rouge
+                const gray = 0.299 * rawOldPx[j] + 0.587 * rawOldPx[j + 1] + 0.114 * rawOldPx[j + 2];
+                const darkness = 1 - gray / 255; // 0=blanc, 1=noir
+                // Plus le trait est sombre, plus le rouge est vif
+                out[j]     = Math.round(255 - darkness * (255 - 200));  // R
+                out[j + 1] = Math.round(255 - darkness * 255);          // G → 0
+                out[j + 2] = Math.round(255 - darkness * 255);          // B → 0
+                out[j + 3] = 255;
+            } else if (added[i] === 0) {
+                // Ajouté → teinter le pixel original nouveau en bleu
+                const gray = 0.299 * rawNewPx[j] + 0.587 * rawNewPx[j + 1] + 0.114 * rawNewPx[j + 2];
+                const darkness = 1 - gray / 255;
+                out[j]     = Math.round(255 - darkness * 255);          // R → 0
+                out[j + 1] = Math.round(255 - darkness * (255 - 80));   // G
+                out[j + 2] = Math.round(255 - darkness * (255 - 210));  // B
+                out[j + 3] = 255;
+            } else if (same[i] === 1) {
+                // Identique → plan original en gris (désaturé)
+                const grayOld = 0.299 * rawOldPx[j] + 0.587 * rawOldPx[j + 1] + 0.114 * rawOldPx[j + 2];
+                const grayNew = 0.299 * rawNewPx[j] + 0.587 * rawNewPx[j + 1] + 0.114 * rawNewPx[j + 2];
+                const g = Math.round(Math.min(grayOld, grayNew));
+                out[j] = g; out[j + 1] = g; out[j + 2] = g; out[j + 3] = 255;
             } else {
-                // Fond blanc
-                pixOut[i] = 255;
-                pixOut[i + 1] = 255;
-                pixOut[i + 2] = 255;
-                pixOut[i + 3] = 255;
+                // Fond → affiche le fond original (blanc/crème) du nouveau plan
+                out[j]     = rawNewPx[j];
+                out[j + 1] = rawNewPx[j + 1];
+                out[j + 2] = rawNewPx[j + 2];
+                out[j + 3] = 255;
             }
         }
 
-        ctx.putImageData(output, 0, 0);
-        return result;
+        ctx.putImageData(imgData, 0, 0);
+        return canvas;
     },
 
     /**
-     * Crée un canvas de superposition avec opacité réglable
-     * pour le mode "overlay" avec slider d'opacité
+     * Diff only : fond clair avec le plan original en filigrane + différences colorées vibrantes
      */
-    createBlendedOverlay(canvasOld, canvasNew, opacity = 0.5) {
-        const w = canvasOld.width;
-        const h = canvasOld.height;
+    _createDiffOnlyCanvas(same, removed, added, rawOldPx, rawNewPx, w, h) {
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        const imgData = ctx.createImageData(w, h);
+        const out = imgData.data;
 
-        const result = document.createElement('canvas');
-        result.width = w;
-        result.height = h;
-        const ctx = result.getContext('2d');
-
-        // Teinter l'ancien en rouge
-        const tintedOld = this._tintCanvas(canvasOld, 231, 76, 60);
-        // Teinter le nouveau en bleu
-        const tintedNew = this._tintCanvas(canvasNew, 41, 128, 185);
-
-        // Dessiner ancien
-        ctx.globalAlpha = 1 - opacity;
-        ctx.drawImage(tintedOld, 0, 0);
-
-        // Superposer nouveau
-        ctx.globalAlpha = opacity;
-        ctx.globalCompositeOperation = 'multiply';
-        ctx.drawImage(tintedNew, 0, 0);
-
-        ctx.globalAlpha = 1;
-        ctx.globalCompositeOperation = 'source-over';
-
-        return result;
-    },
-
-    /**
-     * Teinte un canvas (multiplie les pixels sombres par une couleur)
-     */
-    _tintCanvas(sourceCanvas, r, g, b) {
-        const w = sourceCanvas.width;
-        const h = sourceCanvas.height;
-        const result = document.createElement('canvas');
-        result.width = w;
-        result.height = h;
-        const ctx = result.getContext('2d');
-        const sourceData = Utils.getImageData(sourceCanvas);
-        const output = ctx.createImageData(w, h);
-        const src = sourceData.data;
-        const dst = output.data;
-
-        for (let i = 0; i < src.length; i += 4) {
-            const gray = Utils.toGrayscale(src[i], src[i + 1], src[i + 2]);
-            const factor = 1 - gray / 255; // 0 = blanc, 1 = noir
-
-            dst[i] = Math.round(255 - factor * (255 - r));
-            dst[i + 1] = Math.round(255 - factor * (255 - g));
-            dst[i + 2] = Math.round(255 - factor * (255 - b));
-            dst[i + 3] = 255;
+        for (let i = 0, j = 0; i < w * h; i++, j += 4) {
+            if (removed[i] === 0) {
+                // Supprimé → rouge vif
+                const gray = 0.299 * rawOldPx[j] + 0.587 * rawOldPx[j + 1] + 0.114 * rawOldPx[j + 2];
+                const darkness = 1 - gray / 255;
+                out[j]     = Math.round(255 - darkness * (255 - 200));
+                out[j + 1] = Math.round(255 - darkness * 255);
+                out[j + 2] = Math.round(255 - darkness * 255);
+                out[j + 3] = 255;
+            } else if (added[i] === 0) {
+                // Ajouté → bleu vif
+                const gray = 0.299 * rawNewPx[j] + 0.587 * rawNewPx[j + 1] + 0.114 * rawNewPx[j + 2];
+                const darkness = 1 - gray / 255;
+                out[j]     = Math.round(255 - darkness * 255);
+                out[j + 1] = Math.round(255 - darkness * (255 - 80));
+                out[j + 2] = Math.round(255 - darkness * (255 - 210));
+                out[j + 3] = 255;
+            } else if (same[i] === 1) {
+                // Identique → gris très clair (contexte léger)
+                const grayOld = 0.299 * rawOldPx[j] + 0.587 * rawOldPx[j + 1] + 0.114 * rawOldPx[j + 2];
+                // Éclaircir fortement : ramener vers 230
+                const g = Math.round(230 + (grayOld - 230) * 0.3);
+                out[j] = g; out[j + 1] = g; out[j + 2] = g; out[j + 3] = 255;
+            } else {
+                // Fond
+                out[j] = 255; out[j + 1] = 255; out[j + 2] = 255; out[j + 3] = 255;
+            }
         }
 
-        ctx.putImageData(output, 0, 0);
-        return result;
+        ctx.putImageData(imgData, 0, 0);
+        return canvas;
     }
 };
